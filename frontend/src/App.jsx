@@ -228,6 +228,7 @@ function App() {
 
   const pipelineSteps = useMemo(() => {
     const rows = stageTableRows;
+    const logText = logs.map((l) => stripAnsi(l)).join("\n").toLowerCase();
     const byStage = (stageName) =>
       rows.filter(
         (r) => String(r.stage || "").trim().toLowerCase() === stageName.toLowerCase()
@@ -262,6 +263,21 @@ function App() {
     const hasProcessSummary = artifacts.some((a) =>
       a.includes("standardization_process_summary_")
     );
+    const hasRocketStatus = artifacts.some((a) =>
+      a.includes("rocket_execution_status_")
+    );
+    const isLocalOnlyRun =
+      logText.includes("local-only mode") ||
+      logText.includes("stage 1-3") ||
+      form.allow_local_run;
+    const hasPublishLogSignal =
+      logText.includes("filebrowser_upload") ||
+      logText.includes("uploaded") ||
+      logText.includes("ontology_file");
+    const hasValidateLogSignal =
+      logText.includes("dq02_totals_consistency") ||
+      logText.includes("dq08_id_number_format") ||
+      logText.includes("dq10_payee_vs_policeholder");
 
     const steps = [
       {
@@ -272,17 +288,17 @@ function App() {
       {
         title: "Find",
         desc: "Canonical sheets matched",
-        state: summarizeState(findRows)
+        state: summarizeState(findRows, hasExtracted || hasStandardized || hasProcessSummary)
       },
       {
         title: "Extract",
         desc: "Source tables created",
-        state: summarizeState(extractRows, hasExtracted)
+        state: summarizeState(extractRows, hasStandardized || hasProcessSummary || hasExtracted)
       },
       {
         title: "Standardise",
         desc: "Canonical outputs + checks",
-        state: summarizeState(standardizeRows, hasStandardized)
+        state: summarizeState(standardizeRows, hasProcessSummary || hasStandardized)
       },
       {
         title: "Summarise",
@@ -292,21 +308,34 @@ function App() {
       {
         title: "Publish",
         desc: "FileBrowser upload + ontology",
-        state: summarizeState(publishInfraRows)
+        state: isLocalOnlyRun
+          ? "idle"
+          : summarizeState(publishInfraRows, hasRocketStatus || hasPublishLogSignal)
       },
       {
         title: "Validate",
         desc: "DQ02 / DQ08 / DQ10 workflows",
-        state: summarizeState(validateRows)
+        state: isLocalOnlyRun
+          ? "idle"
+          : summarizeState(validateRows, hasRocketStatus || hasValidateLogSignal)
       }
     ];
 
     if (isActiveRun) {
-      const firstPending = steps.find(
-        (s) => s.state === "idle" || s.state === "active"
-      );
-      if (firstPending && firstPending.state === "idle") {
-        firstPending.state = "active";
+      const firstIdle = steps.find((s) => s.state === "idle");
+      if (firstIdle) {
+        if (
+          firstIdle.title === "Publish" &&
+          !isLocalOnlyRun &&
+          hasProcessSummary &&
+          !hasRocketStatus
+        ) {
+          firstIdle.state = "active";
+        } else if (firstIdle.title === "Validate" && !isLocalOnlyRun && hasPublishLogSignal) {
+          firstIdle.state = "active";
+        } else if (firstIdle.title !== "Publish" && firstIdle.title !== "Validate") {
+          firstIdle.state = "active";
+        }
       }
     }
 
@@ -316,7 +345,7 @@ function App() {
       active: s.state === "active",
       failed: s.state === "failed"
     }));
-  }, [artifacts, isActiveRun, runId, stageTableRows]);
+  }, [artifacts, form.allow_local_run, isActiveRun, logs, runId, stageTableRows]);
 
   const startRun = async (e) => {
     e.preventDefault();
