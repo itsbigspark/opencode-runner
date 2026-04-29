@@ -147,6 +147,81 @@ def _has_non_empty_cookie_value() -> bool:
     return bool(content)
 
 
+def _cookie_diagnostics() -> dict[str, str | bool]:
+    cookie_value = (os.getenv("STRATIO_COOKIE") or "").strip()
+    cookie_path_raw = (os.getenv("STRATIO_COOKIE_PATH") or "").strip()
+    cookie_path = str(Path(cookie_path_raw).expanduser()) if cookie_path_raw else ""
+
+    if cookie_value:
+        return {
+            "cookie_source": "STRATIO_COOKIE",
+            "cookie_path": cookie_path,
+            "cookie_path_exists": bool(cookie_path and Path(cookie_path).exists()),
+            "cookie_path_readable": bool(cookie_path and Path(cookie_path).is_file()),
+            "cookie_path_size": str(Path(cookie_path).stat().st_size) if cookie_path and Path(cookie_path).is_file() else "0",
+            "cookie_reason": "",
+        }
+
+    if not cookie_path:
+        return {
+            "cookie_source": "",
+            "cookie_path": "",
+            "cookie_path_exists": False,
+            "cookie_path_readable": False,
+            "cookie_path_size": "0",
+            "cookie_reason": "STRATIO_COOKIE and STRATIO_COOKIE_PATH are both unset",
+        }
+
+    p = Path(cookie_path).expanduser()
+    if not p.exists():
+        return {
+            "cookie_source": "STRATIO_COOKIE_PATH",
+            "cookie_path": str(p),
+            "cookie_path_exists": False,
+            "cookie_path_readable": False,
+            "cookie_path_size": "0",
+            "cookie_reason": "Cookie file does not exist at STRATIO_COOKIE_PATH",
+        }
+    if not p.is_file():
+        return {
+            "cookie_source": "STRATIO_COOKIE_PATH",
+            "cookie_path": str(p),
+            "cookie_path_exists": True,
+            "cookie_path_readable": False,
+            "cookie_path_size": "0",
+            "cookie_reason": "STRATIO_COOKIE_PATH exists but is not a file",
+        }
+    try:
+        content = p.read_text(encoding="utf-8").strip()
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "cookie_source": "STRATIO_COOKIE_PATH",
+            "cookie_path": str(p),
+            "cookie_path_exists": True,
+            "cookie_path_readable": False,
+            "cookie_path_size": str(p.stat().st_size),
+            "cookie_reason": f"Cookie file read failed: {exc}",
+        }
+    if not content:
+        return {
+            "cookie_source": "STRATIO_COOKIE_PATH",
+            "cookie_path": str(p),
+            "cookie_path_exists": True,
+            "cookie_path_readable": True,
+            "cookie_path_size": str(p.stat().st_size),
+            "cookie_reason": "Cookie file is empty",
+        }
+
+    return {
+        "cookie_source": "STRATIO_COOKIE_PATH",
+        "cookie_path": str(p),
+        "cookie_path_exists": True,
+        "cookie_path_readable": True,
+        "cookie_path_size": str(p.stat().st_size),
+        "cookie_reason": "",
+    }
+
+
 def _preflight() -> dict:
     opencode_bin = shutil.which("opencode")
     opencode_cli = bool(opencode_bin)
@@ -183,6 +258,7 @@ def _preflight() -> dict:
         "stratio_jdbc_configured": stratio_jdbc_configured,
     }
 
+    cookie_diag = _cookie_diagnostics()
     return {
         "ready": ready,
         "mode": "stratio_ready" if stratio_ready else "local_only",
@@ -196,6 +272,12 @@ def _preflight() -> dict:
                 "Stratio integration requires cookie + API base URL. "
                 "JDBC is optional unless STRATIO_REQUIRE_JDBC=true."
             ),
+            "cookie_source": cookie_diag["cookie_source"],
+            "cookie_path": cookie_diag["cookie_path"],
+            "cookie_path_exists": cookie_diag["cookie_path_exists"],
+            "cookie_path_readable": cookie_diag["cookie_path_readable"],
+            "cookie_path_size": cookie_diag["cookie_path_size"],
+            "cookie_reason": cookie_diag["cookie_reason"],
         },
     }
 
@@ -295,6 +377,7 @@ def _stratio_health() -> dict:
         and (api_ok if require_api_ping else bool(api_base_url))
         and (jdbc_ok if require_jdbc else True)
     )
+    cookie_diag = _cookie_diagnostics()
     return {
         "connected": connected,
         "checks": {
@@ -310,7 +393,12 @@ def _stratio_health() -> dict:
             "api_ping_mode": "required" if require_api_ping else "optional",
             "jdbc": jdbc_msg,
             "jdbc_mode": "required" if require_jdbc else "optional",
-            "cookie_source": "STRATIO_COOKIE or STRATIO_COOKIE_PATH",
+            "cookie_source": cookie_diag["cookie_source"] or "STRATIO_COOKIE or STRATIO_COOKIE_PATH",
+            "cookie_path": cookie_diag["cookie_path"],
+            "cookie_path_exists": cookie_diag["cookie_path_exists"],
+            "cookie_path_readable": cookie_diag["cookie_path_readable"],
+            "cookie_path_size": cookie_diag["cookie_path_size"],
+            "cookie_reason": cookie_diag["cookie_reason"],
         },
     }
 
@@ -422,7 +510,6 @@ def _execute_pipeline(state: RunState, req: RunRequest) -> None:
                 str(repo_dir),
                 "--model",
                 "openai/gpt-5.4",
-                "--dangerously-skip-permissions",
                 "--command",
                 "ben-spec-process",
                 str(excel_path),

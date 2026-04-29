@@ -28,7 +28,7 @@ cd /Users/bhagyashri_lohiya/Aviva/opencode-runner
 source scripts/set_stratio_env.sh ~/.secrets/stratio.cookie
 ```
 
-Quick cookie save helper (macOS):
+Quick cookie save helper (macOS/Linux; falls back to manual paste):
 
 ```bash
 # copy Stratio cookie value in browser first, then:
